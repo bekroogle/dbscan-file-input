@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>DBSCAN</title>
+		
+/**
+ * loadKernal 
+ */
+<script type="text/javascript">
+	function loadKernel(id){
+		var kernelElement = document.getElementById(id);
+		var kernelSource = kernelElement.text;
+		if (kernelElement.src != "") {
+			var mHttpReq = new XMLHttpRequest();
+			mHttpReq.open("GET", kernelElement.src, false);
+			mHttpReq.send(null);
+			kernelSource = mHttpReq.responseText;
+		} 
+		return kernelSource;
+	}
+</script>
+		
+/**
+ * preprocessing 
+ */
+<script id="preprocessing" type="text/x-opencl">
+	__kernel void buildCluster(__global unsigned int* x, __global unsigned int * y,
+								__global unsigned int* formattedinsrc,
+								__global unsigned int* minx, __global unsigned int* miny,
+								__global unsigned int* maxx, __global unsigned int* maxy,
+								unsigned int partioncount, unsigned int nodecount){
+		unsigned int gtid = get_global_id(0);
+		if(gtid < partioncount){
+ 				// If a node falls in between min and max values, add it to the partation
+				for (int i = 0; i < nodecount; i++){  
+					if(x[i] >= minx[gtid] && x[i] <= maxx[gtid] && y[i] >= miny[gtid] && y[i] <= maxy[gtid]){
+						int j = 0;
+						while(formattedinsrc[j + gtid * 20] != (nodecount + 1)){
+							j++;
+						}
+						formattedinsrc[j + gtid * 20] = i;
+					}
+				}
+			}
+		} 	
+</script>
+		
+<script id = "MakeAJ" type="text/x-opencl">
+	__kernel void makeAJ(__global unsigned int* x, __global unsigned int* y,
+						__global unsigned int* formattedinsrc, __global unsigned int* AJ, 
+						unsigned int partioncount, unsigned int nodecount){
+		unsigned int gtid = get_global_id(0);
+		if(gtid < partioncount){
+			for(int i = 0; i < 20; i++){
+				if(formattedinsrc[gtid * 20 + i] != (nodecount + 1)){
+					for(int j = i; j < 20; j++){
+						if(formattedinsrc[gtid *20 + j] != (nodecount + 1)){
+							//int distance = abs(x[formattedinsrc[gtid * 20 + i]] - x[formattedinsrc[gtid * 20 + j]]) + abs(y[formattedinsrc[gtid * 20 + i]] - y[formattedinsrc[gtid * 20 + j]]);
+							int xdistance = 100;
+							int ydistance = 100;
+							if(x[formattedinsrc[gtid * 20 + i]] >= x[formattedinsrc[gtid * 20 + j]]){
+								xdistance = x[formattedinsrc[gtid * 20 + i]] - x[formattedinsrc[gtid * 20 + j]];}
+							else{
+								xdistance = x[formattedinsrc[gtid * 20 + j]] - x[formattedinsrc[gtid * 20 + i]];}
+							if(y[formattedinsrc[gtid * 20 + i]] >= y[formattedinsrc[gtid * 20 + j]]){
+								ydistance = y[formattedinsrc[gtid * 20 + i]] - y[formattedinsrc[gtid * 20 + j]];}
+							else{
+								ydistance = y[formattedinsrc[gtid * 20 + j]] - y[formattedinsrc[gtid * 20 + i]];}
+							int distance = xdistance + ydistance;
+							int a = 0;
+							int b = 0;
+							if(formattedinsrc[gtid * 20 + i] > formattedinsrc[gtid * 20 + j]){
+								a = formattedinsrc[gtid * 20 + i];
+								b = formattedinsrc[gtid * 20 + j];}
+							else{
+								a = formattedinsrc[gtid * 20 + j];
+								b = formattedinsrc[gtid * 20 + i];}
+							int index = ((a * a + a) / 2) + b;
+							AJ[index] = distance;
+							/* 
+							AJ[formattedinsrc[gtid * 20 + i] + nodecount * formattedinsrc[gtid * 20 + i]] = distance;
+							AJ[formattedinsrc[gtid * 20 + j] + nodecount * formattedinsrc[gtid * 20 + i]] = distance;
+							AJ[formattedinsrc[gtid * 20 + i] + nodecount * formattedinsrc[gtid * 20 + j]] = distance;
+							AJ[formattedinsrc[gtid * 20 + j] + nodecount * formattedinsrc[gtid * 20 + j]] = distance;		*/
+			}}}}}}
+</script>
+<script type="text/javascript">       
+
+function point(x, y){
+	this.x = x;
+	this.y = y;
+	this.ntype = 'u';
+}
+function min(a, b){
+	if(a < b){
+		return a;
+	}else{
+		return b;}}
+function max(a, b){
+	if(a < b){
+		return b;
+	}else{
+		return a;
+	}
+}
+function sortThem(pt, xp, yp){
+	for(var i = 0; i < pt.length; i++){
+		xp[i] = pt[i].x;
+		yp[i] = pt[i].y;
+	}
+
+	sort(xp, 0, xp.length-1);
+	sort(yp, 0 , yp.length-1);
+}
+
+function sortSubEdges(arr, lindex, rindex){
+	if(lindex >= rindex){
+		return;
+	}else{
+		var piv = lindex + Math.floor((rindex - lindex) / 2);
+		
+		//document.write(piv + ":" + arr[piv] + "<br />");
+		
+		var less = [];
+		var greater =[];
+		var equal = [];
+		for(var i = lindex; i <= rindex; i++){
+			if(arr[i].distance < arr[piv].distance){
+				less.push(arr[i]);
+			}else if(arr[i].distance > arr[piv].distance){
+				greater.push(arr[i]);
+			}else{
+				equal.push(arr[i]);
+			}
+		}
+		var baseStart = lindex;
+		var baseEnd = less.length + lindex;
+		for(var i = baseStart; i < baseEnd; i++){
+			arr[i] = less[i - baseStart];
+		}
+		
+		piv = baseStart = baseEnd;
+		baseEnd += equal.length;
+		for(var i = baseStart; i < baseEnd; i++){
+			arr[i] = equal[i - baseStart];
+		}
+		
+		baseStart = baseEnd;
+		baseEnd += greater.length;
+		for(var i = baseStart; i < baseEnd; i++){
+			arr[i] = greater[i - baseStart];
+		} 
+		
+		sortSubEdges(arr, lindex, piv - 1);
+		sortSubEdges(arr, piv + 1, rindex);
+	}
+}
+function sortEdges(edges){
+	sortSubEdges(edges, 0, edges.length-1);
+}
+
+function edge(I, J, Distance){
+	this.i = I;
+	this.j = J;
+	this.distance = Distance;
+}
+
+//Replaces all roots == higherValue with lowestValue
+function replaceRoot(rootArray, higherNode, lowerNode){
+	var higherValue = max(rootArray[higherNode], rootArray[lowerNode]);
+	var lowerValue = min(rootArray[higherNode], rootArray[lowerNode]);
+	
+	for(var k = 0; k < rootArray.length; k++){
+	//console.log("Higher value" + higherNode + " Lower Value " + lowerNode);
+		if(rootArray[k] === higherValue){
+			rootArray[k] = lowerValue;
+		}
+	}
+}				
+// Constructs an array of Edge objects from the one-dimensional matrix.
+// Each Edge object has the following fields: i, j, distance.
+// @param matrix 
+function construct(matrix, edges) {
+	var size = matrix.length;
+	var iTable = createITable(size); //Makes a lookup table for row numbers.
+	var jTable = createJTable(size); //Makes a lookup table for col numbers. 
+
+
+	for (var i = 0; i < size; i++) { 		//For each item in the matrix...
+
+		var pointI = iTable[i]; 			//Lookup the row number.
+		var pointJ = jTable[i];				//Lookup the col number.
+		var distance = matrix[i];			//Get the distance from the matrix.
+
+		//Create a temporary Edge object.
+		var currentEdge = {
+			'i': pointI < pointJ ? pointI : pointJ,
+			'j': pointI < pointJ ? pointJ : pointI,
+			'distance': distance
+		};
+
+		if (currentEdge.distance !== 0) {
+			edges.push(currentEdge);			//Add the currentEdge object to the edges array.
+		}
+	}
+}
+
+		// Helper function. Creates a lookup table for j-values.
+		// @param size - the total length of the one-dimensional matrix
+		// @return jTable - an array mapping matrix indices to column number.
+function createJTable(size) {
+	var jTable = [];
+	jTable.length = size;
+	var index = 0;
+	for (var i = 1; index < size; i++) {
+		for (var j = 0; j < i; j++) {
+			jTable[index++] = j;
+		}
+	}
+	return jTable;
+}
+
+function postProcessing(matrix, nodeCount, eps, minPts) {
+	var sorting = false;
+	if(sorting){
+		return postProcessing_withSort(matrix, nodeCount, eps, minPts);
+	}else{
+		return postProcessing_noSort(matrix, nodeCount, eps, minPts);
+	}
+}
+
+function postProcessing_withSort(matrix, nodeCount, eps, minPts) {
+	var neighborcount = [];
+	var clustercount = [];
+	for(var i = 0; i < nodeCount; i++){
+		neighborcount.push(0);
+		clustercount.push(0);
+	}
+	var edges = [];
+	construct(matrix, edges);
+	
+	sortEdges(edges);
+	console.log(edges);
+	var rootArray = [];					
+	for(var p = 0; p < nodeCount; p++){
+		rootArray.push(p);
+	} 
+	console.log(rootArray);
+	console.log("Inside PostProcessing");
+	//for(var p = 0; p < edges.length && rootArray.length < (nodeCount - 1) && edges[p].distance <= eps; p++){
+	for(var p = 0; p < edges.length && edges[p].distance <= eps; p++){		
+		neighborcount[edges[p].i]++;
+		neighborcount[edges[p].j]++;		
+		if(!connected(edges[p].i, edges[p].j, rootArray)){
+				
+				var mn = min(edges[p].i, edges[p].j);
+				var mx = max(edges[p].i, edges[p].j);
+				//console.log("mn " + mn + " mx " + mx);
+				replaceRoot(rootArray, mx, mn);
+				//console.log("!connected");
+			}
+			console.log(rootArray);
+	}
+	
+	for(var i = 0; i < rootArray.length; i++){
+		clustercount[rootArray[i]]++;
+	}
+	
+	for(var i = 0; i < neighborcount.length; i = i + 1){
+		if(neighborcount[i] <= minPts){
+			if(clustercount[rootArray[i]] >= minPts){
+				neighborcount[i].ntype="b";}
+			else{
+				neighborcount[i].ntype="n";}
+		}
+		else{
+			neighborcount[i].ntype="c";}
+		console.log("Print Neighborcount");
+		console.log(neighborcount);
+	return rootArray; 
+	}
+	}
+	
+	function postProcessing_noSort(matrix, nodeCount, eps, minPts) {
+	var neighborcount = [];
+	var clustercount = [];
+	for(var i = 0; i < nodeCount; i++){
+		neighborcount.push(0);
+		clustercount.push(0);
+	}
+	var edges = [];
+	construct(matrix, edges);
+	
+	sortEdges(edges);
+	console.log(edges);
+	var rootArray = [];					
+	for(var p = 0; p < nodeCount; p++){
+		rootArray.push(p);
+	} 
+	console.log(rootArray);
+	console.log("Inside PostProcessing");
+	//for(var p = 0; p < edges.length && rootArray.length < (nodeCount - 1) && edges[p].distance <= eps; p++){
+	for(var p = 0; p < edges.length; p++){		
+		if(edges[p].distance <= eps){
+			neighborcount[edges[p].i]++;
+			neighborcount[edges[p].j]++;		
+			if(!connected(edges[p].i, edges[p].j, rootArray)){
+					
+					var mn = min(edges[p].i, edges[p].j);
+					var mx = max(edges[p].i, edges[p].j);
+					//console.log("mn " + mn + " mx " + mx);
+					replaceRoot(rootArray, mx, mn);
+					//console.log("!connected");
+				}
+				console.log(rootArray);
+		}
+	}
+	
+	for(var i = 0; i < rootArray.length; i++){
+		clustercount[rootArray[i]]++;
+	}
+	
+	for(var i = 0; i < neighborcount.length; i = i + 1){
+		if(neighborcount[i] <= minPts){
+			if(clustercount[rootArray[i]] >= minPts){
+				neighborcount[i].ntype="b";}
+			else{
+				neighborcount[i].ntype="n";}
+		}
+		else{
+			neighborcount[i].ntype="c";}
+		console.log("Print Neighborcount");
+		console.log(neighborcount);
+	return rootArray; 
+	}
+	}
+
+// Helper function. Creates a lookup table for i-values.
+// @param size - the total length of the one-dimensional matrix
+// @return iTable - an array mapping matrix indices to row number.
+function createITable(size) {
+	var iTable = [];
+	iTable.length = size;
+	var index = 0;
+	for (var i = 0; index < size; i++) {
+		for (var j = 0; j <= i; j++) {
+			iTable[index++] = i;
+		}
+	}
+	return iTable;
+}
+
+// Checks to see if the two index positions in rootArray have the same value,
+// thereby checking to see if the two trees are already connected or not.
+function connected(indexU, indexV, rootArray) {
+	return (rootArray[indexU] == rootArray[indexV])
+}
+function partition(mn, mx){
+	var mxx = max(mn.x, mx.x);
+	var mxy = max(mn.y, mx.y);
+	var mnx = min(mn.x, mx.x);
+	var mny = min(mn.y, mx.y);
+	
+	this.mn = new point(mnx, mny);
+	this.mx = new point(mxx, mxy);
+} 
+function sort(arr, lindex, rindex){
+	if(lindex >= rindex){
+		return;
+	}else{
+		var piv = lindex + Math.floor((rindex - lindex) / 2);
+		
+		//document.write(piv + ":" + arr[piv] + "<br />");
+		
+		var less = [];
+		var greater =[];
+		var equal = [];
+		for(var i = lindex; i <= rindex; i++){
+			if(arr[i] < arr[piv]){
+				less.push(arr[i]);
+			}else if(arr[i] > arr[piv]){
+				greater.push(arr[i]);
+			}else{
+				equal.push(arr[i]);
+			}
+		}
+		var baseStart = lindex;
+		var baseEnd = less.length + lindex;
+		for(var i = baseStart; i < baseEnd; i++){
+			arr[i] = less[i - baseStart];
+		}
+		
+		piv = baseStart = baseEnd;
+		baseEnd += equal.length;
+		for(var i = baseStart; i < baseEnd; i++){
+			arr[i] = equal[i - baseStart];
+		}
+		
+		baseStart = baseEnd;
+		baseEnd += greater.length;
+		for(var i = baseStart; i < baseEnd; i++){
+			arr[i] = greater[i - baseStart];
+		} 
+
+		sort(arr, lindex, piv - 1);
+		sort(arr, piv + 1, rindex);
+	}
+	}
+function count_part(pt, height, width, prts, pc){
+	if(width > 1 && height > 1){
+		var N = pt.length;
+		var hCount = max(Math.ceil(N / width), 1);
+		var vCount = max(Math.ceil(N / height), 1);
+	
+		var xedges = [];
+		var yedges = [];
+		
+		var xp = [];
+		var yp = [];
+		
+		sortThem(pt, xp, yp);
+		
+		for(var i = 0; i * hCount < xp.length; i++){
+			xedges.push(xp[i * hCount]);
+		}
+		if(xedges.length < width + 1){
+			//document.write("testA");
+			xedges.push(xp[xp.length - 1]);
+		}
+		
+		for(var i = 0; i * vCount < yp.length; i++){
+			yedges.push(yp[i * vCount]);
+		}
+		if(yedges.length < height + 1){
+			//document.write("testB");
+			yedges.push(yp[yp.length - 1]);
+		}
+		
+		for(var i = 0; i < yedges.length - 1; i++){
+			for(var j = 0; j < xedges.length - 1; j++){
+				var pt1 = new point(xedges[j], yedges[i]);
+				var pt2 = new point(xedges[j + 1], yedges[i + 1]);
+				var part1 = new partition(pt1, pt2);
+				prts.push(part1);
+				pc[0] = pc[0] + 1;
+			}
+		}
+		output.innerHTML = "Done with count_part";
+	}
+}
+
+function cleanpartitions(prts, pc){
+	for(var i = 0; i < pc; i++){
+		if(prts[i].mn.x < 0){
+			var tmpy = prts[i].mn.y;
+			prts[i].mn = new point(0, tmpy);
+			}
+		if(prts[i].mn.y < 0){
+			var tmpx = prts[i].mn.x;
+			prts[i].mn = new point(tmpx, 0);
+			}} }
+			
+function square_part(pw, ph, height, width, prts, pc){
+			for(var h = 0; h< height; h = h + ph){
+				for(var w = 0; w < width; w = w + pw){
+				var p = new point(w, h);
+				var q = new point(w + pw, h + ph);
+				prts.push(new partition(p, q));
+				pc[0] = pc[0] + 1;}}
+	}
+function no_ghost(prts, epsilon){
+	for(var i = 0; i < prts.length; i++){
+		prts[i].mn.x = prts[i].mn.x - epsilon;
+		prts[i].mn.y = prts[i].mn.y - epsilon;
+		prts[i].mx.x = prts[i].mx.x + epsilon;
+		prts[i].mx.y = prts[i].mx.y + epsilon;
+	}
+}
+function ghost(prts, eps){
+	var g = [];
+	for(var i = 0; i < prts.length; i++){
+		var pt1 = new point(prts[i].mn.x, prts[i].mn.y-eps);
+		var pt2 = new point(prts[i].mx.x, prts[i].mn.y+eps);
+		var part = new partition(pt1, pt2);
+		g.push(part);
+		pt1 = new point(prts[i].mx.x-eps, prts[i].mn.y);
+		pt2 = new point(prts[i].mx.x+eps, prts[i].mx.y);
+		part = new partition(pt1, pt2);
+		g.push(part);
+		pt1 = new point(prts[i].mx.x-eps, prts[i].mn.y-eps);
+		pt2 = new point(prts[i].mx.x+eps, prts[i].mn.y+eps);
+		part = new partition(pt1, pt2);
+		g.push(part);
+	}
+	for(var i = 0; i < g.length; i++){
+		prts.push(g[i]);
+	}
+}
+	
+function DBScan(nodes, eps, minPts){
+
+// All output is written to element by id "output"
+var output = document.getElementById("output");
+output.innerHTML = "Starting program";
+try {
+	
+	  // First check if the WebCL extension is installed at all 
+	  if (window.WebCL == undefined) {
+		alert("Unfortunately your system does not support WebCL. " +
+			  "Make sure that you have both the OpenCL driver " +
+			  "and the WebCL browser extension installed.");
+		return false;
+	  }
+	  
+	  //Variables
+	  var nodecount = nodes.length;
+	  var height = 10;
+	  var width = 10;
+	  
+	  var partitions = [];  
+	  
+	  var pc = [];
+	   var partioncount = 4;
+	 
+		pc[0] = 0;
+		
+		
+	  count_part(nodes, height, width, partitions, pc);
+	  //square_part(pw, ph, height, width, partitions, pc);
+	  partioncount = pc[0];
+	  no_ghost(partitions, eps);
+	  cleanpartitions(partitions, partioncount);
+	  for(var i = 0; i < partioncount; i++){
+		output.innerHTML += "<br>(" + partitions[i].mn.x + "," + partitions[i].mn.y +") (" + partitions[i].mx.x + "," + partitions[i].mx.y +")";}
+	  //Temp Work
+	  /*
+	  pointa = new point(0, 0);  pointb = new point(5, 5);
+	  pointc = new point(0, 5);  pointd = new point(5, 10);
+	  pointe = new point(5, 0);  pointf = new point(10, 5);
+	  pointg = new point(5, 5);  pointh = new point(10, 10);
+	  pata = new partition(pointa, pointb);
+	  patb = new partition(pointc, pointd);
+	  patc = new partition(pointe, pointf);
+	  patd = new partition(pointg, pointh);
+	  partitions.push(pata); partitions.push(patb); partitions.push(patc); partitions.push(patd);
+	  */
+	   // Generate nodes
+	  var Nodex= new Uint32Array(nodecount);    
+	  var Nodey= new Uint32Array(nodecount);
+	  for ( var i=0; i<nodecount;  i=i+1) {
+		Nodex[i] = Math.floor(Math.random() * (height + 1)); //Random number 0-height
+		Nodey[i] = Math.floor(Math.random()  * (width + 1)); //Random number 0-width
+	  }
+	  
+	  var formattedinsrc = new Uint32Array(partioncount * 20);
+	  for(var i = 0; i < partioncount * 20; i++){
+		formattedinsrc[i] = nodecount + 1;}
+	  var minx = new Uint32Array(partioncount);
+	  var miny = new Uint32Array(partioncount);
+	  var maxx = new Uint32Array(partioncount);
+	  var maxy = new Uint32Array(partioncount);
+	  var AJsize = Math.ceil((nodecount * nodecount / 2) + Math.floor(nodecount / 2));
+	  var AJ = new Uint32Array(AJsize);
+	  for(var i = 0; i < partioncount; i++){
+		minx[i] = partitions[i].mn.x;
+		miny[i] = partitions[i].mn.y;
+		maxx[i] = partitions[i].mx.x;
+		maxy[i] = partitions[i].mx.y;}
+	   for(var i = 0; i < AJsize; i++){
+			AJ[i] = 0;}
+
+	  
+	  // Setup WebCL context using the default device of the first available pla	m 
+	  var platforms = WebCL.getPlatformIDs();
+	  var ctx = WebCL.createContextFromType ([WebCL.CL_CONTEXT_PLATFORM, platforms[0]],
+											   WebCL.CL_DEVICE_TYPE_DEFAULT);
+					   
+	  // Reserve buffers
+	  var bufSize = nodecount * 4; // size in bytes
+	  output.innerHTML += "<br>Buffer size: " + bufSize + " bytes";
+	  var device_x = ctx.createBuffer (WebCL.CL_MEM_READ_ONLY, bufSize);
+	  var device_y = ctx.createBuffer (WebCL.CL_MEM_READ_ONLY, bufSize);
+	  var device_formattedinsrc = ctx.createBuffer (WebCL.CL_MEM_WRITE_ONLY, partioncount * 20 * 4);
+	  var device_minx = ctx.createBuffer (WebCL.CL_MEM_READ_ONLY, partioncount * 4);
+	  var device_miny = ctx.createBuffer (WebCL.CL_MEM_READ_ONLY, partioncount * 4);
+	  var device_maxx = ctx.createBuffer (WebCL.CL_MEM_READ_ONLY, partioncount * 4);
+	  var device_maxy = ctx.createBuffer (WebCL.CL_MEM_READ_ONLY, partioncount * 4);
+	  var device_AJ = ctx.createBuffer (WebCL.CL_MEM_WRITE_ONLY, AJsize * 4);
+	  
+	  // Create and build program for the first device
+	  var kernelSrc = loadKernel("preprocessing");
+	  var program = ctx.createProgramWithSource(kernelSrc);
+	  var devices = ctx.getContextInfo(WebCL.CL_CONTEXT_DEVICES);
+	  
+	  output.innerHTML += "<br> Building program";
+	  try {
+		program.buildProgram ([devices[0]], "");
+	  } catch(e) {
+		alert ("Failed to build WebCL program. Error "
+			   + program.getProgramBuildInfo (devices[0], WebCL.CL_PROGRAM_BUILD_STATUS)
+			   + ":  " + program.getProgramBuildInfo (devices[0], WebCL.CL_PROGRAM_BUILD_LOG));
+		throw e;
+	  }
+	  
+	  output.innerHTML += "<br> Creating kernel and setting arguments ";
+	  // Create kernel and set arguments
+	  var kernel = program.createKernel ("buildCluster");
+	  kernel.setKernelArg (0, device_x);
+	  kernel.setKernelArg (1, device_y);    
+	  kernel.setKernelArg (2, device_formattedinsrc);
+	  kernel.setKernelArg (3 ,device_minx);
+	  kernel.setKernelArg (4, device_miny);
+	  kernel.setKernelArg (5, device_maxx);
+	  kernel.setKernelArg (6, device_maxy);
+	  kernel.setKernelArg (7, partioncount, WebCL.types.UINT);
+	  kernel.setKernelArg (8, nodecount, WebCL.types.UINT);
+	  
+	  
+	   output.innerHTML += "<br>Creating command queue on device 0"
+	  // Create command queue using the first available device
+	  var cmdQueue = ctx.createCommandQueue (devices[0], 0);
+	  
+	  output.innerHTML += "<br> Copying memory";
+	  // Write the buffer to OpenCL device memory
+	  cmdQueue.enqueueWriteBuffer (device_x, false, 0, bufSize, Nodex, []);
+	  cmdQueue.enqueueWriteBuffer (device_y, false, 0, bufSize, Nodey, []);
+      cmdQueue.enqueueWriteBuffer (device_minx, false, 0, partioncount * 4, minx, []);
+	  cmdQueue.enqueueWriteBuffer (device_miny, false, 0, partioncount * 4, miny, []);
+	  cmdQueue.enqueueWriteBuffer (device_maxx, false, 0, partioncount * 4, maxx, []);
+	  cmdQueue.enqueueWriteBuffer (device_maxy, false, 0, partioncount * 4, maxy, []);
+	  cmdQueue.enqueueWriteBuffer (device_formattedinsrc, false, 0, partioncount * 4 * 20, formattedinsrc, []);
+	  // Init ND-range
+	  var localWS = [100];
+	  var globalWS = [Math.ceil (nodecount / localWS) * localWS];
+
+	  output.innerHTML += "<br>Global work item size: " + globalWS;
+	  output.innerHTML += "<br>Local work item size: " + localWS;
+	  
+	  // Execute (enqueue) kernel
+	  cmdQueue.enqueueNDRangeKernel(kernel, globalWS.length, [], globalWS, localWS, []);
+
+	  // Read the result buffer from OpenCL device
+	  outBuffer = new Uint32Array(nodecount);
+	  cmdQueue.enqueueReadBuffer (device_formattedinsrc, false, 0, partioncount * 20 * 4, formattedinsrc, []);    
+	  cmdQueue.finish (); //Finish all the operations
+	  
+	  
+	  //RUN makeAJ
+	  // Create and build program for the first device
+	  kernelSrc = loadKernel("MakeAJ");
+	  program = ctx.createProgramWithSource(kernelSrc);
+	  devices = ctx.getContextInfo(WebCL.CL_CONTEXT_DEVICES);
+	  
+	  output.innerHTML += "<br> Building program";
+	  try {
+		program.buildProgram ([devices[0]], "");
+	  } catch(e) {
+		alert ("Failed to build WebCL program. Error "
+			   + program.getProgramBuildInfo (devices[0], WebCL.CL_PROGRAM_BUILD_STATUS)
+			   + ":  " + program.getProgramBuildInfo (devices[0], WebCL.CL_PROGRAM_BUILD_LOG));
+		throw e;
+	  }
+	  
+	   output.innerHTML += "<br> Creating kernel and setting arguments ";
+	  // Create kernel and set arguments
+	  var kernel = program.createKernel ("makeAJ");
+	  kernel.setKernelArg (0, device_x);
+	  kernel.setKernelArg (1, device_y);    
+	  kernel.setKernelArg (2, device_formattedinsrc);
+	  kernel.setKernelArg (3 ,device_AJ);
+	  kernel.setKernelArg (4, partioncount, WebCL.types.UINT);
+	  kernel.setKernelArg (5, nodecount, WebCL.types.UINT);
+	  
+	  output.innerHTML += "<br>Creating command queue on device 0"
+	  // Create command queue using the first available device
+	  cmdQueue = ctx.createCommandQueue (devices[0], 0);
+	  
+	  output.innerHTML += "<br> Copying memory";
+	  // Write the buffer to OpenCL device memory
+	  cmdQueue.enqueueWriteBuffer (device_x, false, 0, bufSize, Nodex, []);
+	  cmdQueue.enqueueWriteBuffer (device_y, false, 0, bufSize, Nodey, []);
+	  cmdQueue.enqueueWriteBuffer (device_formattedinsrc, false, 0, partioncount * 4 * 20, formattedinsrc, []);	
+	  cmdQueue.enqueueWriteBuffer (device_AJ, false, 0, AJsize * 4, AJ, []);	
+	  
+	  
+	  
+	  cmdQueue.enqueueNDRangeKernel(kernel, globalWS.length, [], globalWS, localWS, []);
+	  
+	  
+	  cmdQueue.enqueueReadBuffer (device_AJ, false, 0, AJsize * 4, AJ, []);    
+	  cmdQueue.enqueueNDRangeKernel(kernel, globalWS.length, [], globalWS, localWS, []);
+	  
+	  //Reduce AJ Matrix
+	  var clusters = postProcessing(AJ, nodecount, eps, minPts);
+	  
+	  //Print input vectors and result vector
+	  output.innerHTML += "<br>Nodes = "; 
+	  for (var i = 0; i < nodecount; i = i + 1) {
+		output.innerHTML += "<br>Node " + i + " (" + Nodex[i] + ", " + Nodey[i] + ")";}
+		
+	  output.innerHTML += "<br>Result = ";
+	  var sum = 0;
+	  for (var i = 0; i < partioncount * 20; i = i + 1) {
+		if(i % 20 === 0){
+			output.innerHTML+="<br>";}
+		output.innerHTML += formattedinsrc[i] + ",";}
+		/*
+		 output.innerHTML +="<br>AJ Matrix <br>";
+		 var countera = 0;
+		 var counterb = 1;
+	    for(var i = 0; i < AJsize; i++){
+		if(countera === counterb){
+			output.innerHTML += "<br>";
+			countera = 0;
+			counterb++;}
+		output.innerHTML += AJ[i] + ",";
+		countera++;}
+		*/
+		output.innerHTML +="<br>Clusters<br>";
+		for(var i = 0; i < nodecount; i++){
+			output.innerHTML += clusters[i] + ",";}
+	} catch(e) {
+	  document.getElementById("output").innerHTML += "<h3>ERROR:</h3><pre style=\"color:red;\">" + e.message + "</pre>";
+	  throw e;}
+}
+
+</script>
+
+<script type="text/javascript" src="point.js"></script>
+<script src="dbscan.js"></script>
+<link rel="stylesheet" type="text/css" href="style.css"/>
+		
+</head>
+<body>
+	<p>
+	<form>	
+	<label for="eps">Epsilon:</label>
+	<input id="eps" type="number" value="3" />
+	<label for="minPts">Minimum Points:
+	<input id="minPts" type="number" value="4" /></label>
+	<input type="file" id="begin" />
+	</form>
+	</p>
+	<script type="text/javascript" src="readFile.js"></script>
+	<div id="output">&nbsp;</div>
+</body>
+</html>
