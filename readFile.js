@@ -1,5 +1,3 @@
-
-
 function readOneFile(e) {
 	eps = parseInt(document.getElementById('eps').value);
 	minPts = parseInt(document.getElementById('minPts').value);
@@ -11,6 +9,12 @@ function readOneFile(e) {
 		r.onload = function(e) {
 			var contents = e.target.result;				
 			var lines = contents.split("\n");
+			
+			// Stop execution if file is not a proper file. 
+			if (!(lines[0][0] == "P" && lines[0][1] == "1")) {
+				alert("Improper ASCII-encoded .pbm file.");
+				return;
+			}
 			
 			for (var i = 0; i < lines.length; i++) {
 				for (var j = 0; j < lines[i].length; j++) {
@@ -28,3 +32,11 @@ function readOneFile(e) {
 	}
 }
 document.getElementById('begin').addEventListener('change', readOneFile, false);
+
+
+// Array Remove - By John Resig (MIT Licensed)
+Array.prototype.remove = function(from, to) {
+  var rest = this.slice((to || from) + 1 || this.length);
+  this.length = from < 0 ? this.length + from : from;
+  return this.push.apply(this, rest);
+};
