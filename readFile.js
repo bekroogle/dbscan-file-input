@@ -12,19 +12,39 @@ function readOneFile(e) {
 			
 			// Stop execution if file is not a proper file. 
 			if (!(lines[0][0] == "P" && lines[0][1] == "1")) {
-				alert("Improper ASCII-encoded .pbm file.");
+				alert("Can't find \"magic number\" in .pbm file.");
+				return;
+			}
+			lines.remove(0);
+						
+			for (var i = 0; i < lines.length; i++) {
+				if (lines[i][0] == '#') {
+					lines.remove(i);
+				}
+				console.log(lines[i]);
+			}
+			
+			var matchArray = lines[0].match(/^(\d+) (\d+)/)
+			if (matchArray.length != 3) {
+				alert("Improper size declaration in .pbm file.");
 				return;
 			}
 			
-			for (var i = 0; i < lines.length; i++) {
-				for (var j = 0; j < lines[i].length; j++) {
+			var imageWidth = parseInt(matchArray[1]);
+			var imageHeight = parseInt(matchArray[2]);
+			
+			lines.remove(0);
+
+			for (var i = 0; i < imageHeight; i++) {
+				lines[i] = lines[i].replace(/\s+/g, '');
+				for (var j = 0; j < imageWidth; j++) {
 					if (lines[i][j] == '1') {
-						points.push(new Point(i,j)); 
+						points.push(new Point(j,i));
 					}
 				}
 			}
-			console.log(points);
-			DBScan(points, eps, minPts);
+			
+			DBScan(points, imageWidth, imageHeight, eps, minPts);
 		}
 		r.readAsText(f);
 	} else {

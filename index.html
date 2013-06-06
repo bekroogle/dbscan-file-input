@@ -497,7 +497,7 @@ function ghost(prts, eps){
 	}
 }
 	
-function DBScan(nodes, eps, minPts){
+function DBScan(nodes, width, height, eps, minPts){
 
 // All output is written to element by id "output"
 var output = document.getElementById("output");
@@ -514,14 +514,12 @@ try {
 	  
 	  //Variables
 	  var nodecount = nodes.length;
-	  var height = 10;
-	  var width = 10;
 	  
 	  var partitions = [];  
 	  
 	  var pc = [];
-	   var partioncount = 4;
-	 
+	  var partioncount = 4;
+	  
 		pc[0] = 0;
 		
 		
@@ -697,6 +695,8 @@ try {
 	  output.innerHTML += "<br>Nodes = "; 
 	  for (var i = 0; i < nodecount; i = i + 1) {
 		output.innerHTML += "<br>Node " + i + " (" + Nodex[i] + ", " + Nodey[i] + ")";}
+	
+	
 		
 	  output.innerHTML += "<br>Result = ";
 	  var sum = 0;
